@@ -740,6 +740,9 @@ function init() {
   updateHeader();
   renderAll();
   requestNotifPerm();
+  if (settings.notif && Notification.permission === 'granted') {
+    rescheduleAllNotifs();
+  }
   if (settings.tts) setTimeout(speakTasks, 1000);
 }
 
@@ -1104,10 +1107,34 @@ function toggleDark() {
 
 function toggleNotif() {
   settings.notif = !settings.notif;
-  if (settings.notif) requestNotifPerm();
+  if (settings.notif) {
+    if (Notification.permission === 'default') {
+      Notification.requestPermission().then(p => {
+        if (p === 'granted') {
+          rescheduleAllNotifs();
+          showToast('🔔 Notifikasi aktif! Jadwal pengingat disetel.');
+        } else {
+          settings.notif = false;
+          updateSettingsUI();
+          saveData();
+          showToast('⚠️ Izin notifikasi ditolak. Aktifkan di pengaturan HP.');
+        }
+      });
+    } else if (Notification.permission === 'granted') {
+      rescheduleAllNotifs();
+      showToast('🔔 Pengingat aktif! ' + tasks.filter(t=>!t.done&&t.deadline).length + ' jadwal disetel.');
+    } else {
+      settings.notif = false;
+      updateSettingsUI();
+      saveData();
+      showToast('⚠️ Izin notifikasi diblokir. Aktifkan di pengaturan HP → Chrome → Notifikasi.');
+      return;
+    }
+  } else {
+    showToast('🔕 Pengingat dimatikan');
+  }
   updateSettingsUI();
   saveData();
-  showToast(settings.notif ? '🔔 Pengingat aktif' : '🔕 Pengingat dimatikan');
 }
 
 function toggleTTS() {
@@ -1175,24 +1202,103 @@ function speak(text) {
 
 // ─── NOTIFIKASI ───────────────────────────────────────────
 function requestNotifPerm() {
-  if ('Notification' in window && Notification.permission === 'default') {
-    Notification.requestPermission();
+  if (!('Notification' in window)) {
+    showToast('⚠️ Browser tidak mendukung notifikasi');
+    return;
+  }
+  if (Notification.permission === 'default') {
+    Notification.requestPermission().then(p => {
+      if (p === 'granted') {
+        showToast('✅ Notifikasi diizinkan!');
+        rescheduleAllNotifs();
+      }
+    });
+  } else if (Notification.permission === 'denied') {
+    showToast('⚠️ Buka Pengaturan HP → Chrome → Notifikasi → Izinkan');
   }
 }
 
 function scheduleNotif(task) {
-  if (!settings.notif || !task.deadline || Notification.permission !== 'granted') return;
-  const deadline = new Date(task.deadline);
-  const oneHourBefore = deadline.getTime() - 60 * 60 * 1000;
-  const now = Date.now();
-  if (oneHourBefore > now) {
-    setTimeout(() => {
-      new Notification('⏰ Reminder Tugas!', {
-        body: `"${task.nama}" (${task.matkul}) deadline dalam 1 jam!`,
-        icon: 'icon-192.png'
-      });
-    }, oneHourBefore - now);
+  if (!task.deadline) return;
+  if (Notification.permission === 'default') {
+    Notification.requestPermission().then(p => {
+      if (p === 'granted') scheduleNotif(task);
+    });
+    return;
   }
+  if (Notification.permission !== 'granted') {
+    showToast('⚠️ Izinkan notifikasi dulu di pengaturan HP!');
+    return;
+  }
+
+  const deadline = new Date(task.deadline);
+  const now = Date.now();
+
+  // 1 jam sebelum deadline
+  const t1h = deadline.getTime() - 60 * 60 * 1000;
+  if (t1h > now) {
+    setTimeout(() => {
+      playNotifSound();
+      try {
+        new Notification('⏰ Deadline 1 Jam Lagi!', {
+          body: task.nama + ' — ' + task.matkul + ' | ' + deadline.toLocaleTimeString('id-ID', {hour:'2-digit',minute:'2-digit'}),
+          icon: './icon-192.png',
+          vibrate: [200, 100, 200, 100, 200],
+          tag: 'r1h-' + task.id,
+          requireInteraction: true,
+          silent: false
+        });
+      } catch(e) {}
+    }, t1h - now);
+  }
+
+  // Tepat saat deadline
+  const tDead = deadline.getTime();
+  if (tDead > now) {
+    setTimeout(() => {
+      playNotifSound();
+      try {
+        new Notification('🚨 Deadline Sekarang!', {
+          body: task.nama + ' — ' + task.matkul + ' sudah waktunya dikumpul!',
+          icon: './icon-192.png',
+          vibrate: [400, 100, 400, 100, 400],
+          tag: 'rdead-' + task.id,
+          requireInteraction: true,
+          silent: false
+        });
+      } catch(e) {}
+    }, tDead - now);
+  }
+}
+
+function playNotifSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const notes = [
+      {freq: 523.25, start: 0.0, dur: 0.2},
+      {freq: 659.25, start: 0.2, dur: 0.2},
+      {freq: 783.99, start: 0.4, dur: 0.35}
+    ];
+    notes.forEach(n => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.value = n.freq;
+      const t = ctx.currentTime + n.start;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.5, t + 0.03);
+      gain.gain.linearRampToValueAtTime(0.3, t + n.dur * 0.7);
+      gain.gain.linearRampToValueAtTime(0, t + n.dur);
+      osc.start(t);
+      osc.stop(t + n.dur + 0.01);
+    });
+  } catch(e) { console.log('sound error:', e); }
+}
+
+function rescheduleAllNotifs() {
+  tasks.filter(t => !t.done && t.deadline).forEach(t => scheduleNotif(t));
 }
 
 // ─── EXPORT ───────────────────────────────────────────────
