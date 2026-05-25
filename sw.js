@@ -1,5 +1,11 @@
-const CACHE = 'rtk-v1';
-const FILES = ['./', './index.html'];
+const CACHE = 'rtk-v2';
+const FILES = [
+  '/reminder-tugas-kuliah/',
+  '/reminder-tugas-kuliah/index.html',
+  '/reminder-tugas-kuliah/manifest.json',
+  '/reminder-tugas-kuliah/icon-192.png',
+  '/reminder-tugas-kuliah/icon-512.png'
+];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)));
@@ -15,6 +21,6 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   e.respondWith(
-    caches.match(e.request).then(r => r || fetch(e.request).catch(() => caches.match('./index.html')))
+    caches.match(e.request).then(r => r || fetch(e.request))
   );
 });
